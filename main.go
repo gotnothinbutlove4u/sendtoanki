@@ -17,13 +17,10 @@ func main() {
 	log.Println("started...")
 	http.HandleFunc("/", handler.UploadHandler)
 	http.HandleFunc("/view", handler.ViewHandler)
+	http.HandleFunc("/download", handler.DownloadHandler)
 
 	log.Println("Server starting on port 8080...")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }
-
-// Source - https://stackoverflow.com/a
-// Posted by Astockwell, modified by community. See post 'Timeline' for change history
-// Retrieved 2026-01-11, License - CC BY-SA 4.0

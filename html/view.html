@@ -1,1 +1,15 @@
-<h1>Viewing</h1>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Processed Words</title>
+</head>
+<body>
+    <h1>Processed Words</h1>
+    <ul>
+        {{range .Words}}
+        <li>{{.Word}}</li>
+        {{end}}
+    </ul>
+    <a href="{{.DownloadURL}}" id="downloadBtn">Download output.apkg</a>
+</body>
+</html>

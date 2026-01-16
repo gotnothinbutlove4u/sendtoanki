@@ -200,6 +200,6 @@ ol.def-list li {
 	if err := pkg.WriteToFile(fileName); err != nil {
 		return err
 	}
-	fmt.Printf("Successfully created Anki deck: %s", fileName)
+	fmt.Printf("Successfully created Anki deck: %s\n", fileName)
 	return nil
 }
