@@ -35,17 +35,6 @@ var templates = template.Must(template.New("").Funcs(funcMap).ParseFiles("html/u
 
 var processedWords []oxforddicthandler.OxfordWord
 
-// 1. HELPER: Convert slice to map for O(1) lookups
-// We do this once so we don't loop through 1000 words for every single check.
-var basicWordMap map[string]bool
-
-func init() {
-	basicWordMap = make(map[string]bool)
-	for _, w := range constants.WIKIPEDIA_1000_BASIC_ENG {
-		basicWordMap[w] = true
-	}
-}
-
 // 2. WRAPPER STRUCT
 // This is what the HTML template will actually receive.
 type ViewWord struct {
@@ -136,7 +125,7 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		// 3.5 read 'word_key's with multiple usages
 		wordKeysWithMultipleUsages, err := readWordKeysWithMultipleUsagesFromDB(tmpFilePath)
 
-		// 4. parse the raw JSON into golang structures
+		// 4. create a golangn struct from the JSON
 		oxWords := []oxforddicthandler.OxfordWord{}
 		for _, r := range rawRows {
 			found := false
@@ -145,8 +134,9 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 					found = true
 					if idx := getIdxOfWordInEntry(r.Stem.String, oxWords); isLookedUpMoreThanOnce(r.WordKey.String, wordKeysWithMultipleUsages) && idx > -1 {
 						oxWords[idx].AppendUsageAndBook(r.Usage.String, r.Title.String)
+						oxWords[idx].AppendWordsInUsage(r.Word.String)
 					} else {
-						oxWords = append(oxWords, *oxforddicthandler.CreateWord(r, p))
+						oxWords = append(oxWords, *oxforddicthandler.CreateWord(&r, &p))
 					}
 					break
 				}
@@ -184,7 +174,7 @@ func ViewHandler(w http.ResponseWriter, r *http.Request) {
 	for i, word := range processedWords {
 		viewWords[i] = ViewWord{
 			OxfordWord: word,
-			IsBasic:    basicWordMap[word.Word()],
+			IsBasic:    constants.WIKIPEDIA_ENG_1000_BASIC[word.Stem()],
 		}
 	}
 
@@ -235,7 +225,7 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	// to avoid index out of range issues if multiple items matched (unlikely here).
 	newWords := []oxforddicthandler.OxfordWord{}
 	for _, item := range processedWords {
-		if item.Word() != wordToDelete {
+		if item.Stem() != wordToDelete {
 			newWords = append(newWords, item)
 		}
 	}
@@ -377,7 +367,7 @@ func isLookedUpMoreThanOnce(wordKey string, wordKeysWithMultipleUsages []tutoria
 
 func getIdxOfWordInEntry(stem string, wordEntry []oxforddicthandler.OxfordWord) int {
 	for i := range wordEntry {
-		if wordEntry[i].Word() == stem {
+		if wordEntry[i].Stem() == stem {
 			return i
 		}
 	}

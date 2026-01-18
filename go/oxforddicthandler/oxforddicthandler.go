@@ -10,12 +10,13 @@ import (
 )
 
 type OxfordWord struct {
-	wordEntry dictparser.WordEntry
-	usage     []string
-	book      []string
+	wordEntry    dictparser.WordEntry
+	wordsInUsage []string
+	usage        []string
+	book         []string
 }
 
-func (w OxfordWord) Word() string {
+func (w OxfordWord) Stem() string {
 	return w.wordEntry.Word
 }
 func (w OxfordWord) Book() string {
@@ -29,8 +30,27 @@ func (w OxfordWord) Definition() string {
 func (w OxfordWord) Usage() string {
 	rst := ""
 	for i := range w.usage {
-		rst += fmt.Sprintf("<blockquote>%s<small>%s</small></blockquote>", w.usage[i], w.book[i])
+		split := strings.Split(strings.ToLower(w.usage[i]), " ")
+		usage := ""
+		for _, v := range split {
+			contained := false
+			for _, w := range w.wordsInUsage {
+				if strings.Contains(v, strings.ToLower(w)) {
+					contained = true
+					break
+				}
+			}
+			if contained {
+				usage += fmt.Sprintf("<b>%s</b> ", v)
+			} else {
+				usage += v + " "
+			}
+		}
+		runed := []rune(usage)
+		usage = string(runed[:len(runed)-1])
+		rst += fmt.Sprintf("<blockquote>%s <small>%s</small></blockquote>", usage, w.book[i])
 	}
+
 	return rst
 }
 
@@ -40,9 +60,10 @@ func (w *OxfordWord) AppendUsageAndBook(usage, book string) {
 
 }
 
-func CreateWord(fromDB tutorial.GetRowsRow, fromPython dictparser.WordEntry) *OxfordWord {
-	w := OxfordWord{wordEntry: fromPython}
+func CreateWord(fromDB *tutorial.GetRowsRow, fromPython *dictparser.WordEntry) *OxfordWord {
+	w := OxfordWord{wordEntry: *fromPython}
 	w.AppendUsageAndBook(fromDB.Usage.String, fromDB.Title.String)
+	w.AppendWordsInUsage(fromDB.Word.String)
 	return &w
 }
 
@@ -114,4 +135,8 @@ func generateHTML(w dictparser.WordEntry) string {
 	sb.WriteString("</div>")
 
 	return sb.String()
+}
+
+func (w *OxfordWord) AppendWordsInUsage(str string) {
+	w.wordsInUsage = append(w.wordsInUsage, str)
 }

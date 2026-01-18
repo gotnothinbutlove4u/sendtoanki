@@ -9,7 +9,7 @@ import (
 )
 
 type WordData interface {
-	Word() string
+	Stem() string
 	Book() string
 	Definition() string
 	Usage() string
@@ -98,7 +98,7 @@ blockquote small:before {
 	model.Templates = []genanki.Template{
 		{
 			Name: "Card 1",
-			Qfmt: "<h1>{{Word}}</h1>\n<hr>\n{{Usage}}",
+			Qfmt: "<h1>{{Stem}}</h1>\n<hr>\n{{Usage}}",
 			Afmt: "{{FrontSide}}\n\n<hr>\n{{Definition}}",
 		},
 	}
@@ -108,7 +108,7 @@ blockquote small:before {
 	for _, v := range w {
 		deck.AddNote(genanki.NewNote(
 			model.ID,
-			[]string{v.Word(), v.Usage(), v.Definition()},
+			[]string{v.Stem(), v.Usage(), v.Definition()},
 			[]string{"sendtokindle::" + strcase.ToCamel(v.Book())},
 		),
 		)
