@@ -1,4 +1,4 @@
-module tuto.sqlc.dev/app
+module github.com/gotnothinbutlove4u/sendtoanki
 
 go 1.25.2
 

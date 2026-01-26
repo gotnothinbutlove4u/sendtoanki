@@ -2,7 +2,7 @@ package constants
 
 const JSON_FILENAME = "master.json"
 const ZIP_FILENAME = "json.zip"
-const ROOT = "/Users/zibabshivan/Desktop/sendtoanki"
+const ROOT = "."
 const DB_NAME = "vocab.db"
 const STEM_FILENAME = "stems.txt"
 const ANKI_MODEL_ID int64 = 1558522999 // randomly generated

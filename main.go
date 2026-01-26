@@ -1,22 +1,40 @@
 package main
 
 import (
-	_ "embed"
 	"log"
 	"net/http"
 
-	"tuto.sqlc.dev/app/go/handler"
-)
+	_ "modernc.org/sqlite"
 
-//go:embed schema.sql
-var ddl string
+	"github.com/gotnothinbutlove4u/sendtoanki/go/handler"
+)
 
 func main() {
 	log.Println("started...")
-	http.HandleFunc("/", handler.UploadHandler)
-	http.HandleFunc("/view", handler.ViewHandler)
-	http.HandleFunc("/download", handler.DownloadHandler)
-	http.HandleFunc("/delete", handler.DeleteHandler)
+
+	// Simple CORS middleware
+	enableCORS := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			// In production, replace '*' with your frontend's actual origin
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+
+			// Handle preflight requests
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			next(w, r)
+		}
+	}
+
+	// Register API Handlers
+	http.HandleFunc("/api/upload", enableCORS(handler.UploadAPIHandler))
+	http.HandleFunc("/api/download", enableCORS(handler.DownloadAPIHandler))
+	// We use a prefix handler for delete to capture the word stem from the URL
+	http.HandleFunc("/api/words/", enableCORS(handler.DeleteAPIHandler))
 
 	log.Println("Server starting on port 8080...")
 	if err := http.ListenAndServe(":8080", nil); err != nil {

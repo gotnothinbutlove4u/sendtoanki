@@ -4,254 +4,248 @@ import (
 	"archive/zip"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
+
+	// "os/exec" // Exec commented out as we are using native Go parser now
 	"path/filepath"
 	"strings"
+	"sync"
 
-	_ "modernc.org/sqlite"
-
-	"tuto.sqlc.dev/app/go/constants"
-	"tuto.sqlc.dev/app/go/dictparser"
-	"tuto.sqlc.dev/app/go/oxforddicthandler"
-	"tuto.sqlc.dev/app/go/sendtoanki"
-	"tuto.sqlc.dev/app/go/tutorial"
+	"github.com/gotnothinbutlove4u/sendtoanki/go/constants"
+	"github.com/gotnothinbutlove4u/sendtoanki/go/dictparser"
+	"github.com/gotnothinbutlove4u/sendtoanki/go/oxforddicthandler"
+	"github.com/gotnothinbutlove4u/sendtoanki/go/sendtoanki"
+	"github.com/gotnothinbutlove4u/sendtoanki/go/tutorial"
 )
 
-// Define a function map to allow "safe" HTML rendering in templates
-var funcMap = template.FuncMap{
-	"safe": func(s string) template.HTML {
-		return template.HTML(s)
-	},
-}
+// Use a mutex for thread-safe access to the global variable
+var (
+	processedWordsMutex sync.RWMutex
+	processedWords      map[string]*oxforddicthandler.OxfordWord
+)
 
-// Parse templates with the function map attached
-var templates = template.Must(template.New("").Funcs(funcMap).ParseFiles("html/upload.html", "html/view.html"))
-
-var processedWords []oxforddicthandler.OxfordWord
-
-// 2. WRAPPER STRUCT
-// This is what the HTML template will actually receive.
+// ViewWord struct for JSON response
 type ViewWord struct {
-	oxforddicthandler.OxfordWord
-	IsBasic bool
+	Stem       string   `json:"stem"`
+	Definition string   `json:"definition"`
+	Usage      string   `json:"usage"`
+	IsBasic    bool     `json:"isBasic"`
+	Books      []string `json:"books"`
 }
 
-// Update ViewData to use the wrapper
-type ViewData struct {
-	Words       []ViewWord
-	DownloadURL string
+func getProcessedWords() map[string]*oxforddicthandler.OxfordWord {
+	processedWordsMutex.RLock()
+	defer processedWordsMutex.RUnlock()
+	return processedWords
 }
 
-// UploadHandler serves the upload page on GET and processes the file on POST.
-func UploadHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "GET" {
-		err := templates.ExecuteTemplate(w, "upload.html", nil)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Error rendering template: %v", err), http.StatusInternalServerError)
-		}
-		return
-	}
-
-	if r.Method == "POST" {
-		file, header, err := r.FormFile("vocab.db")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		defer file.Close()
-
-		// Create a temporary file to store the upload.
-		tmpFilePath := filepath.Join(constants.ROOT, "resources", header.Filename)
-		tmpFile, err := os.Create(tmpFilePath)
-		if err != nil {
-			http.Error(w, "Could not save file", http.StatusInternalServerError)
-			return
-		}
-		defer tmpFile.Close()
-
-		_, err = io.Copy(tmpFile, file)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Could not save file content: %s", err.Error()), http.StatusInternalServerError)
-			return
-		}
-
-		// dbName := header.Filename
-
-		// 0. Read db
-		rawRows, err := readEveryRowFromDB(tmpFilePath)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Could not read database: %s", err.Error()), http.StatusInternalServerError)
-			return
-		}
-		log.Printf("%d rows found from %s\n", len(rawRows), tmpFilePath)
-
-		// 1. Write a stems text file to be shared with python codes
-		stemDst := filepath.Join(constants.ROOT, "resources", constants.STEM_FILENAME)
-		if err := writeStems(rawRows, stemDst); err != nil {
-			http.Error(w, "Could not write stems", http.StatusInternalServerError)
-			return
-		}
-
-		// 2. create a raw JSON containing definitions of stems
-		cmd := exec.Command(filepath.Join(constants.ROOT, "venv/bin/python3"), "./python/extract.py", stemDst, "./resources/"+constants.ZIP_FILENAME)
-		cmd.Dir = constants.ROOT
-		if err := cmd.Run(); err != nil {
-			log.Println("Python script error")
-			log.Fatal(err)
-		}
-
-		// 3. unzip and read the raw JSON
-		jsonDirLoc := strings.TrimSuffix(filepath.Join(constants.ROOT, "resources", constants.ZIP_FILENAME), filepath.Ext(constants.ZIP_FILENAME))
-		if err := Unzip(filepath.Join(constants.ROOT, "resources", constants.ZIP_FILENAME), jsonDirLoc); err != nil {
-			log.Fatal(err)
-		}
-		b, err := os.ReadFile(filepath.Join(jsonDirLoc, constants.JSON_FILENAME))
-		if err != nil {
-			panic(err)
-		}
-		rawJSON := string(b)
-
-		dictParsed, err := dictparser.ParseDictJson(rawJSON)
-		if err != nil {
-			log.Panic(err)
-		}
-
-		// 3.5 read 'word_key's with multiple usages
-		wordKeysWithMultipleUsages, err := readWordKeysWithMultipleUsagesFromDB(tmpFilePath)
-
-		// 4. create a golangn struct from the JSON
-		oxWords := []oxforddicthandler.OxfordWord{}
-		for _, r := range rawRows {
-			found := false
-			for _, p := range dictParsed {
-				if r.Stem.String == p.Word {
-					found = true
-					if idx := getIdxOfWordInEntry(r.Stem.String, oxWords); isLookedUpMoreThanOnce(r.WordKey.String, wordKeysWithMultipleUsages) && idx > -1 {
-						oxWords[idx].AppendUsageAndBook(r.Usage.String, r.Title.String)
-						oxWords[idx].AppendWordsInUsage(r.Word.String)
-					} else {
-						oxWords = append(oxWords, *oxforddicthandler.CreateWord(&r, &p))
-					}
-					break
-				}
-			}
-			if !found {
-				fmt.Printf("\"%s\" not found in a dictionary\n", r.Stem.String)
-			}
-		}
-		processedWords = oxWords
-
-		log.Println("All's well!")
-		http.Redirect(w, r, "/view", http.StatusSeeOther)
-		return
-	}
-
-	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func setProcessedWords(words map[string]*oxforddicthandler.OxfordWord) {
+	processedWordsMutex.Lock()
+	defer processedWordsMutex.Unlock()
+	processedWords = words
 }
 
-// ViewHandler generates the deck and displays the list of words.
-func ViewHandler(w http.ResponseWriter, r *http.Request) {
-	if len(processedWords) == 0 {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+func sendJSONError(w http.ResponseWriter, message string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// UploadAPIHandler processes the uploaded file and returns the word list as JSON.
+func UploadAPIHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		sendJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Generate deck (unchanged)
-	filePath := filepath.Join(constants.ROOT, "resources/output.apkg")
-	if err := sendtoanki.GenerateDeck(processedWords, filePath); err != nil {
-		http.Error(w, fmt.Sprintf("Error generating deck: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// PREPARE DATA: Wrap the words and check if they are "Basic"
-	viewWords := make([]ViewWord, len(processedWords))
-	for i, word := range processedWords {
-		viewWords[i] = ViewWord{
-			OxfordWord: word,
-			IsBasic:    constants.WIKIPEDIA_ENG_1000_BASIC[word.Stem()],
-		}
-	}
-
-	data := ViewData{
-		Words:       viewWords,
-		DownloadURL: "/download",
-	}
-
-	err := templates.ExecuteTemplate(w, "view.html", data)
+	file, header, err := r.FormFile("vocab.db")
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Error rendering template: %v", err), http.StatusInternalServerError)
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-}
+	defer file.Close()
 
-// DownloadHandler specifically serves the generated .apkg file
-func DownloadHandler(w http.ResponseWriter, r *http.Request) {
-	filePath := filepath.Join(constants.ROOT, "resources/output.apkg")
+	// Ensure resources dir exists
+	os.MkdirAll(filepath.Join(constants.ROOT, "resources"), 0755)
 
-	// Check if file exists before serving
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		http.Error(w, "File not found. Please upload a database first.", http.StatusNotFound)
+	tmpFilePath := filepath.Join(constants.ROOT, "resources", header.Filename)
+	tmpFile, err := os.Create(tmpFilePath)
+	if err != nil {
+		sendJSONError(w, "Could not save file", http.StatusInternalServerError)
+		return
+	}
+	defer tmpFile.Close()
+
+	_, err = io.Copy(tmpFile, file)
+	if err != nil {
+		sendJSONError(w, fmt.Sprintf("Could not save file content: %s", err.Error()), http.StatusInternalServerError)
 		return
 	}
 
-	// Force the browser to download the file instead of trying to open it
+	// 1. Read User's DB (The "Words")
+	rawRows, err := readEveryRowFromDB(tmpFilePath)
+	if err != nil {
+		sendJSONError(w, fmt.Sprintf("Could not read database: %s", err.Error()), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("%d rows found in user DB\n", len(rawRows))
+
+	// 2. Parse the Dictionary (The "Definitions")
+	// Note: dictparser.ParseJSON() reads "./json.json" by default as per your code.
+	// Make sure this file exists in the root of your working directory.
+	dictParsed, err := dictparser.ParseJSON()
+	if err != nil {
+		log.Println("Error parsing dictionary JSON:", err)
+		sendJSONError(w, "Error parsing dictionary JSON", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Dictionary loaded: %d entries\n", len(dictParsed))
+
+	// 3. OPTIMIZATION: Convert Dictionary Slice to Map for O(1) Lookup
+	// This is critical for 100,000+ entries.
+	dictMap := make(map[string]*dictparser.WordEntry, len(dictParsed))
+	for i := range dictParsed {
+		// Store pointer to avoid copying large structs
+		dictMap[dictParsed[i].Title] = &dictParsed[i]
+	}
+
+	// 4. Match Words (O(N) complexity now, instead of O(N*M))
+	wordKeysLookedUpAlot, _ := readWordKeysWithMultipleUsagesFromDB(tmpFilePath)
+	var oxWords = map[string]*oxforddicthandler.OxfordWord{}
+
+	for _, r := range rawRows {
+		// FAST LOOKUP
+		if entry, found := dictMap[r.Stem.String]; found {
+			// Check if we already have this word in our result map (for multiple usages)
+			if existingWord, exists := oxWords[r.Stem.String]; exists && isLookedUpAlot(r.WordKey.String, wordKeysLookedUpAlot) {
+				existingWord.AppendUsageAndBook(r.Usage.String, r.Title.String)
+				existingWord.AppendWordsInUsage(r.Word.String)
+			} else {
+				// Create new word
+				oxWords[r.Stem.String] = oxforddicthandler.CreateWord(&r, entry)
+			}
+		}
+	}
+
+	setProcessedWords(oxWords)
+
+	// 5. Prepare JSON response
+	viewWords := make([]ViewWord, 0, len(oxWords))
+	for _, word := range oxWords {
+		viewWords = append(viewWords, ViewWord{
+			Stem:       word.Stem(),
+			Definition: word.Definition(),
+			Usage:      word.Usage(),
+			// Check constant map safely
+			IsBasic: func() bool {
+				if val, ok := constants.WIKIPEDIA_ENG_1000_BASIC[word.Stem()]; ok {
+					return val
+				}
+				return false
+			}(),
+			Books: word.Books(),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(viewWords)
+}
+
+func DeleteAPIHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "DELETE" {
+		sendJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	stemToDelete := strings.TrimPrefix(r.URL.Path, "/api/words/")
+	if stemToDelete == "" {
+		sendJSONError(w, "Word stem required", http.StatusBadRequest)
+		return
+	}
+
+	processedWordsMutex.Lock()
+	delete(processedWords, stemToDelete)
+	processedWordsMutex.Unlock()
+	w.WriteHeader(http.StatusOK)
+}
+
+func DownloadAPIHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		sendJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	currentWords := getProcessedWords()
+	if len(currentWords) == 0 {
+		sendJSONError(w, "No words to download. Please upload a file first.", http.StatusBadRequest)
+		return
+	}
+
+	// Ensure resources dir exists
+	os.MkdirAll(filepath.Join(constants.ROOT, "resources"), 0755)
+	filePath := filepath.Join(constants.ROOT, "resources/output.apkg")
+
+	log.Println("Generating Anki deck...")
+	if err := sendtoanki.GenerateDeck(currentWords, filePath); err != nil {
+		log.Printf("Error generating deck: %v", err)
+		sendJSONError(w, "Error generating deck", http.StatusInternalServerError)
+		return
+	}
+	log.Println("Deck generated successfully.")
+
 	w.Header().Set("Content-Disposition", "attachment; filename=output.apkg")
 	w.Header().Set("Content-Type", "application/octet-stream")
-
 	http.ServeFile(w, r, filePath)
 }
 
-// Handle deletion of a specific word
-func DeleteHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+// Helpers
 
-	// 1. Get the word to delete from the form
-	wordToDelete := r.FormValue("word_to_delete")
-	if wordToDelete == "" {
-		http.Redirect(w, r, "/view", http.StatusSeeOther)
-		return
+func readEveryRowFromDB(dbLoc string) ([]tutorial.GetRowsRow, error) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", dbLoc)
+	if err != nil {
+		return nil, err
 	}
+	defer db.Close() // Ensure DB is closed
 
-	// 2. Remove it from the slice
-	// We iterate backwards or creating a new slice is often safer/easier
-	// to avoid index out of range issues if multiple items matched (unlikely here).
-	newWords := []oxforddicthandler.OxfordWord{}
-	for _, item := range processedWords {
-		if item.Stem() != wordToDelete {
-			newWords = append(newWords, item)
-		}
+	queries := tutorial.New(db)
+	rows, err := queries.GetRows(ctx)
+	if err != nil {
+		return nil, err
 	}
-	processedWords = newWords
-
-	// 3. Regenerate the Anki deck immediately
-	// If the list is now empty, we might not want to generate a deck,
-	// but usually, an empty deck or skipping generation is fine.
-	if len(processedWords) > 0 {
-		filePath := filepath.Join(constants.ROOT, "resources/output.apkg")
-		err := sendtoanki.GenerateDeck(processedWords, filePath)
-		if err != nil {
-			log.Printf("Error regenerating deck after delete: %v", err)
-			http.Error(w, "Error updating deck", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// Optional: Remove the old file if list is empty
-		os.Remove(filepath.Join(constants.ROOT, "resources/output.apkg"))
-	}
-
-	// 4. Redirect back to the view page
-	http.Redirect(w, r, "/view", http.StatusSeeOther)
+	return rows, nil
 }
 
-// Unzip helper
+func readWordKeysWithMultipleUsagesFromDB(dbLoc string) ([]tutorial.GetWordKeysWithMultipleUsagesRow, error) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", dbLoc)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	queries := tutorial.New(db)
+	rows, err := queries.GetWordKeysWithMultipleUsages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func isLookedUpAlot(wordKey string, wordKeysWithMultipleUsages []tutorial.GetWordKeysWithMultipleUsagesRow) bool {
+	for _, v := range wordKeysWithMultipleUsages {
+		if v.WordKey.String == wordKey {
+			return true
+		}
+	}
+	return false
+}
+
 func Unzip(src, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
@@ -261,115 +255,40 @@ func Unzip(src, dest string) error {
 
 	os.MkdirAll(dest, 0755)
 
-	extractAndWriteFile := func(f *zip.File) error {
-		rc, err := f.Open()
-		if err != nil {
-			return err
-		}
-		defer rc.Close()
+	for _, f := range r.File {
+		fpath := filepath.Join(dest, f.Name)
 
-		path := filepath.Join(dest, f.Name)
-		if !strings.HasPrefix(path, filepath.Clean(dest)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path: %s", path)
+		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path: %s", fpath)
 		}
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(path, f.Mode())
-		} else {
-			os.MkdirAll(filepath.Dir(path), f.Mode())
-			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			_, err = io.Copy(f, rc)
-			if err != nil {
-				return err
-			}
+			os.MkdirAll(fpath, os.ModePerm)
+			continue
 		}
-		return nil
-	}
 
-	for _, f := range r.File {
-		if err := extractAndWriteFile(f); err != nil {
+		if err = os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return err
+		}
+
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func readEveryRowFromDB(dbLoc string) ([]tutorial.GetRowsRow, error) {
-	ctx := context.Background()
-
-	db, err := sql.Open("sqlite", dbLoc)
-	if err != nil {
-		return []tutorial.GetRowsRow{}, err
-	}
-
-	queries := tutorial.New(db)
-
-	rows, err := queries.GetRows(ctx)
-	if err != nil {
-		return []tutorial.GetRowsRow{}, err
-	}
-	for _, r := range rows {
-		if !(r.Word.Valid && r.Stem.Valid && r.Title.Valid && r.Usage.Valid && r.WordKey.Valid) {
-			return []tutorial.GetRowsRow{}, fmt.Errorf("\"%s\" is invalid in DB", r.Word.String)
-		}
-	}
-
-	return rows, nil
-}
-
-func readWordKeysWithMultipleUsagesFromDB(dbLoc string) ([]tutorial.GetWordKeysWithMultipleUsagesRow, error) {
-	ctx := context.Background()
-
-	db, err := sql.Open("sqlite", dbLoc)
-	if err != nil {
-		return []tutorial.GetWordKeysWithMultipleUsagesRow{}, err
-	}
-
-	queries := tutorial.New(db)
-
-	rows, err := queries.GetWordKeysWithMultipleUsages(ctx)
-	if err != nil {
-		return []tutorial.GetWordKeysWithMultipleUsagesRow{}, err
-	}
-	for _, r := range rows {
-		if !(r.WordKey.Valid) {
-			return []tutorial.GetWordKeysWithMultipleUsagesRow{}, fmt.Errorf("a row with the following word_key is invalid: %s", r.WordKey.String)
-		}
-	}
-
-	return rows, nil
-}
-
-func writeStems(rows []tutorial.GetRowsRow, dst string) error {
-	text := ""
-	for _, r := range rows {
-		text += r.Stem.String + "\n"
-	}
-	err := os.WriteFile(dst, []byte(text), 0644)
-	return err
-}
-
-// getIdxOfWordInEntry(r.Stem, oxWords); isLookedUpMoreThanOnce(r.WordKey, wordKeysWithMultipleUsages) && idx > -1 {
-
-func isLookedUpMoreThanOnce(wordKey string, wordKeysWithMultipleUsages []tutorial.GetWordKeysWithMultipleUsagesRow) bool {
-	for _, v := range wordKeysWithMultipleUsages {
-		if v.WordKey.String == wordKey {
-			return true
-		}
-	}
-	return false
-}
-
-func getIdxOfWordInEntry(stem string, wordEntry []oxforddicthandler.OxfordWord) int {
-	for i := range wordEntry {
-		if wordEntry[i].Stem() == stem {
-			return i
-		}
-	}
-	return -1
 }

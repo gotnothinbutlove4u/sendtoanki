@@ -3,9 +3,9 @@ package sendtoanki
 import (
 	"fmt"
 
+	"github.com/gotnothinbutlove4u/sendtoanki/go/constants"
 	"github.com/iancoleman/strcase"
 	"github.com/npcnixel/genanki-go"
-	"tuto.sqlc.dev/app/go/constants"
 )
 
 type WordData interface {
@@ -15,7 +15,7 @@ type WordData interface {
 	Usage() string
 }
 
-func GenerateDeck[W WordData](w []W, fileName string) error {
+func GenerateDeck[W WordData](w map[string]*W, fileName string) error {
 	// Create a basic model and deck
 	model := genanki.NewModel(constants.ANKI_MODEL_ID, "sendtokindle")
 
@@ -98,7 +98,7 @@ blockquote small:before {
 	model.Templates = []genanki.Template{
 		{
 			Name: "Card 1",
-			Qfmt: "<h1>{{Stem}}</h1>\n<hr>\n{{Usage}}",
+			Qfmt: "<h1>{{Word}}</h1>\n<hr>\n{{Usage}}",
 			Afmt: "{{FrontSide}}\n\n<hr>\n{{Definition}}",
 		},
 	}
@@ -106,10 +106,13 @@ blockquote small:before {
 
 	// Add notes to the deck using method chaining
 	for _, v := range w {
+		if v == nil {
+			continue
+		}
 		deck.AddNote(genanki.NewNote(
 			model.ID,
-			[]string{v.Stem(), v.Usage(), v.Definition()},
-			[]string{"sendtokindle::" + strcase.ToCamel(v.Book())},
+			[]string{(*v).Stem(), (*v).Usage(), (*v).Definition()},
+			[]string{"sendtokindle::" + strcase.ToCamel((*v).Book())},
 		),
 		)
 	}
