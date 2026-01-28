@@ -16,11 +16,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gotnothinbutlove4u/sendtoanki/go/constants"
-	"github.com/gotnothinbutlove4u/sendtoanki/go/dictparser"
-	"github.com/gotnothinbutlove4u/sendtoanki/go/oxforddicthandler"
-	"github.com/gotnothinbutlove4u/sendtoanki/go/sendtoanki"
-	"github.com/gotnothinbutlove4u/sendtoanki/go/tutorial"
+	"github.com/dawit909/sendtoanki/src/constants"
+	"github.com/dawit909/sendtoanki/src/dictparser"
+	"github.com/dawit909/sendtoanki/src/oxforddicthandler"
+	"github.com/dawit909/sendtoanki/src/sendtoanki"
+	"github.com/dawit909/sendtoanki/src/tutorial"
 )
 
 // Use a mutex for thread-safe access to the global variable

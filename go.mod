@@ -1,4 +1,4 @@
-module github.com/gotnothinbutlove4u/sendtoanki
+module github.com/dawit909/sendtoanki
 
 go 1.25.2
 

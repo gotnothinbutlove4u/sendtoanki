@@ -6,7 +6,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/gotnothinbutlove4u/sendtoanki/go/handler"
+	"github.com/dawit909/sendtoanki/src/handler"
 )
 
 func main() {

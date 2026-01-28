@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gotnothinbutlove4u/sendtoanki/go/dictparser"
-	"github.com/gotnothinbutlove4u/sendtoanki/go/tutorial"
+	"github.com/dawit909/sendtoanki/src/dictparser"
+	"github.com/dawit909/sendtoanki/src/tutorial"
 )
 
 type OxfordWord struct {

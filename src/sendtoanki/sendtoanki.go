@@ -3,7 +3,7 @@ package sendtoanki
 import (
 	"fmt"
 
-	"github.com/gotnothinbutlove4u/sendtoanki/go/constants"
+	"github.com/dawit909/sendtoanki/src/constants"
 	"github.com/iancoleman/strcase"
 	"github.com/npcnixel/genanki-go"
 )
