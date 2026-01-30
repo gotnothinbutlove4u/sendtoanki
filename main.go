@@ -4,9 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/dawit909/sendtoanki/src/handler"
+	_ "modernc.org/sqlite"
 )
 
 func main() {

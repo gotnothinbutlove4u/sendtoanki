@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 
 	// "os/exec" // Exec commented out as we are using native Go parser now
 	"path/filepath"
@@ -81,6 +82,12 @@ func UploadAPIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tmpFile.Close()
 
+	defer func() {
+		if err := os.Remove(tmpFilePath); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
 	_, err = io.Copy(tmpFile, file)
 	if err != nil {
 		sendJSONError(w, fmt.Sprintf("Could not save file content: %s", err.Error()), http.StatusInternalServerError)
@@ -95,32 +102,13 @@ func UploadAPIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("%d rows found in user DB\n", len(rawRows))
 
-	// 2. Parse the Dictionary (The "Definitions")
-	// Note: dictparser.ParseJSON() reads "./json.json" by default as per your code.
-	// Make sure this file exists in the root of your working directory.
-	dictParsed, err := dictparser.ParseJSON()
-	if err != nil {
-		log.Println("Error parsing dictionary JSON:", err)
-		sendJSONError(w, "Error parsing dictionary JSON", http.StatusInternalServerError)
-		return
-	}
-	log.Printf("Dictionary loaded: %d entries\n", len(dictParsed))
-
-	// 3. OPTIMIZATION: Convert Dictionary Slice to Map for O(1) Lookup
-	// This is critical for 100,000+ entries.
-	dictMap := make(map[string]*dictparser.WordEntry, len(dictParsed))
-	for i := range dictParsed {
-		// Store pointer to avoid copying large structs
-		dictMap[dictParsed[i].Title] = &dictParsed[i]
-	}
-
-	// 4. Match Words (O(N) complexity now, instead of O(N*M))
+	// 2. Match Words (O(N) complexity now, instead of O(N*M))
 	wordKeysLookedUpAlot, _ := readWordKeysWithMultipleUsagesFromDB(tmpFilePath)
 	var oxWords = map[string]*oxforddicthandler.OxfordWord{}
 
 	for _, r := range rawRows {
 		// FAST LOOKUP
-		if entry, found := dictMap[r.Stem.String]; found {
+		if entry, found := dictparser.DictMap[r.Stem.String]; found {
 			// Check if we already have this word in our result map (for multiple usages)
 			if existingWord, exists := oxWords[r.Stem.String]; exists && isLookedUpAlot(r.WordKey.String, wordKeysLookedUpAlot) {
 				existingWord.AppendUsageAndBook(r.Usage.String, r.Title.String)
@@ -134,7 +122,7 @@ func UploadAPIHandler(w http.ResponseWriter, r *http.Request) {
 
 	setProcessedWords(oxWords)
 
-	// 5. Prepare JSON response
+	// 3. Prepare JSON response
 	viewWords := make([]ViewWord, 0, len(oxWords))
 	for _, word := range oxWords {
 		viewWords = append(viewWords, ViewWord{
@@ -142,18 +130,24 @@ func UploadAPIHandler(w http.ResponseWriter, r *http.Request) {
 			Definition: word.Definition(),
 			Usage:      word.Usage(),
 			// Check constant map safely
-			IsBasic: func() bool {
-				if val, ok := constants.WIKIPEDIA_ENG_1000_BASIC[word.Stem()]; ok {
-					return val
-				}
-				return false
-			}(),
-			Books: word.Books(),
+			IsBasic: isBasic(word.Stem()),
+			Books:   word.Books(),
 		})
 	}
 
+	sort.Slice(viewWords, func(i, j int) bool {
+		return strings.ToLower(viewWords[i].Stem) < strings.ToLower(viewWords[j].Stem)
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(viewWords)
+}
+
+func isBasic(str string) bool {
+	if val, ok := constants.WIKIPEDIA_ENG_1000_BASIC[str]; ok {
+		return val
+	}
+	return false
 }
 
 func DeleteAPIHandler(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +182,7 @@ func DownloadAPIHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure resources dir exists
 	os.MkdirAll(filepath.Join(constants.ROOT, "resources"), 0755)
-	filePath := filepath.Join(constants.ROOT, "resources/output.apkg")
+	filePath := filepath.Join(constants.ROOT, "resources/"+constants.OUTPUT_NAME)
 
 	log.Println("Generating Anki deck...")
 	if err := sendtoanki.GenerateDeck(currentWords, filePath); err != nil {
@@ -198,9 +192,12 @@ func DownloadAPIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("Deck generated successfully.")
 
-	w.Header().Set("Content-Disposition", "attachment; filename=output.apkg")
+	w.Header().Set("Content-Disposition", "attachment; filename="+constants.OUTPUT_NAME)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeFile(w, r, filePath)
+	if err := os.Remove(filePath); err != nil {
+		log.Fatal(err)
+	}
 }
 
 // Helpers
