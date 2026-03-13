@@ -1,9 +1,18 @@
 package constants
 
-const JSON_FILENAME = "json.json"
+import (
+	"path/filepath"
+)
+
+const JSON_FILENAME = "oxf_amrc_eng_entries.json"
 const ROOT = "."
 const ANKI_MODEL_ID int64 = 1558522999 // randomly generated
-const OUTPUT_NAME string = "sendtoanki.apkg"
+const DECK_FILENAME string = "sendtoanki.apkg"
+
+var RSC_DIR_PATH string = filepath.Join(ROOT, "resources")
+var TMP_DIR_PATH string = filepath.Join(ROOT, "tmp")
+var DECK_PATH string = filepath.Join(TMP_DIR_PATH, DECK_FILENAME)
+var JSON_PATH string = filepath.Join(ROOT, "resources", JSON_FILENAME)
 
 var WIKIPEDIA_ENG_1000_BASIC = map[string]bool{
 	"a": true, "about": true, "above": true, "across": true, "act": true, "active": true, "activity": true, "add": true, "afraid": true, "after": true, "again": true, "age": true, "ago": true, "agree": true, "air": true, "all": true, "alone": true, "along": true, "already": true, "always": true, "am": true, "amount": true, "an": true, "and": true, "angry": true, "another": true, "answer": true, "any": true, "anyone": true, "anything": true, "anytime": true, "appear": true, "apple": true, "are": true, "area": true, "arm": true, "army": true, "around": true, "arrive": true, "art": true, "as": true, "ask": true, "at": true, "attack": true, "aunt": true, "autumn": true, "away": true,

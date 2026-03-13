@@ -1,8 +1,6 @@
 package sendtoanki
 
 import (
-	"fmt"
-
 	"github.com/dawit909/sendtoanki/src/constants"
 	"github.com/iancoleman/strcase"
 	"github.com/npcnixel/genanki-go"
@@ -67,6 +65,5 @@ func GenerateDeck[W WordData](w map[string]*W, fileName string) error {
 	if err := pkg.WriteToFile(fileName); err != nil {
 		return err
 	}
-	fmt.Printf("Successfully created Anki deck: %s\n", fileName)
 	return nil
 }

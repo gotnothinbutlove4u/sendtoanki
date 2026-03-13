@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/dawit909/sendtoanki/src/constants"
 )
@@ -41,10 +40,9 @@ var DictMap = make(map[string]*WordEntry, noOfEntries)
 
 func ParseJSON() ([]WordEntry, error) {
 	// Open the JSON file
-	jsonPath := filepath.Join(constants.ROOT, "resources", constants.JSON_FILENAME)
-	file, err := os.Open(jsonPath)
+	file, err := os.Open(constants.JSON_PATH)
 	if err != nil {
-		fmt.Println("Error opening file:", err)
+		log.Println("Error opening file:", err)
 		return []WordEntry{}, err
 	}
 	defer file.Close()
@@ -54,7 +52,7 @@ func ParseJSON() ([]WordEntry, error) {
 	decoder := json.NewDecoder(file)
 	err = decoder.Decode(&words)
 	if err != nil {
-		fmt.Println("Error decoding JSON:", err)
+		log.Println("Error decoding JSON:", err)
 		return []WordEntry{}, err
 	}
 

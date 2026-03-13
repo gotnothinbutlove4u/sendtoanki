@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"archive/zip"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -13,7 +12,7 @@ import (
 	"sort"
 
 	// "os/exec" // Exec commented out as we are using native Go parser now
-	"path/filepath"
+
 	"strings"
 	"sync"
 
@@ -64,38 +63,37 @@ func UploadAPIHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, header, err := r.FormFile("vocab.db")
+	userFile, header, err := r.FormFile("vocab.db")
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer userFile.Close()
 
-	// Ensure resources dir exists
-	os.MkdirAll(filepath.Join(constants.ROOT, "resources"), 0755)
-
-	tmpFilePath := filepath.Join(constants.ROOT, "resources", header.Filename)
-	tmpFile, err := os.Create(tmpFilePath)
+	tmp, err := os.CreateTemp(constants.ROOT, header.Filename)
 	if err != nil {
 		sendJSONError(w, "Could not save file", http.StatusInternalServerError)
 		return
 	}
-	defer tmpFile.Close()
 
 	defer func() {
-		if err := os.Remove(tmpFilePath); err != nil {
-			log.Fatal(err)
+		if err := tmp.Close(); err != nil {
+			log.Println(err)
+			return
+		}
+		if err := os.Remove(tmp.Name()); err != nil {
+			log.Println(err)
 		}
 	}()
 
-	_, err = io.Copy(tmpFile, file)
+	_, err = io.Copy(tmp, userFile)
 	if err != nil {
 		sendJSONError(w, fmt.Sprintf("Could not save file content: %s", err.Error()), http.StatusInternalServerError)
 		return
 	}
 
 	// 1. Read User's DB (The "Words")
-	rawRows, err := readEveryRowFromDB(tmpFilePath)
+	rawRows, err := readEveryRowFromDB(tmp.Name())
 	if err != nil {
 		sendJSONError(w, fmt.Sprintf("Could not read database: %s", err.Error()), http.StatusInternalServerError)
 		return
@@ -103,7 +101,7 @@ func UploadAPIHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("%d rows found in user DB\n", len(rawRows))
 
 	// 2. Match Words (O(N) complexity now, instead of O(N*M))
-	wordKeysLookedUpAlot, _ := readWordKeysWithMultipleUsagesFromDB(tmpFilePath)
+	wordKeysLookedUpAlot, _ := readWordKeysWithMultipleUsagesFromDB(tmp.Name())
 	var oxWords = map[string]*oxforddicthandler.OxfordWord{}
 
 	for _, r := range rawRows {
@@ -143,13 +141,6 @@ func UploadAPIHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(viewWords)
 }
 
-func isBasic(str string) bool {
-	if val, ok := constants.WIKIPEDIA_ENG_1000_BASIC[str]; ok {
-		return val
-	}
-	return false
-}
-
 func DeleteAPIHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "DELETE" {
 		sendJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -180,22 +171,17 @@ func DownloadAPIHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure resources dir exists
-	os.MkdirAll(filepath.Join(constants.ROOT, "resources"), 0755)
-	filePath := filepath.Join(constants.ROOT, "resources/"+constants.OUTPUT_NAME)
-
-	log.Println("Generating Anki deck...")
-	if err := sendtoanki.GenerateDeck(currentWords, filePath); err != nil {
+	if err := sendtoanki.GenerateDeck(currentWords, constants.DECK_PATH); err != nil {
 		log.Printf("Error generating deck: %v", err)
 		sendJSONError(w, "Error generating deck", http.StatusInternalServerError)
 		return
 	}
 	log.Println("Deck generated successfully.")
 
-	w.Header().Set("Content-Disposition", "attachment; filename="+constants.OUTPUT_NAME)
+	w.Header().Set("Content-Disposition", "attachment; filename="+constants.DECK_FILENAME)
 	w.Header().Set("Content-Type", "application/octet-stream")
-	http.ServeFile(w, r, filePath)
-	if err := os.Remove(filePath); err != nil {
+	http.ServeFile(w, r, constants.DECK_PATH)
+	if err := os.Remove(constants.DECK_PATH); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -243,49 +229,9 @@ func isLookedUpAlot(wordKey string, wordKeysWithMultipleUsages []tutorial.GetWor
 	return false
 }
 
-func Unzip(src, dest string) error {
-	r, err := zip.OpenReader(src)
-	if err != nil {
-		return err
+func isBasic(str string) bool {
+	if val, ok := constants.WIKIPEDIA_ENG_1000_BASIC[str]; ok {
+		return val
 	}
-	defer r.Close()
-
-	os.MkdirAll(dest, 0755)
-
-	for _, f := range r.File {
-		fpath := filepath.Join(dest, f.Name)
-
-		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path: %s", fpath)
-		}
-
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(fpath, os.ModePerm)
-			continue
-		}
-
-		if err = os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
-			return err
-		}
-
-		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return err
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			outFile.Close()
-			return err
-		}
-
-		_, err = io.Copy(outFile, rc)
-		outFile.Close()
-		rc.Close()
-
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return false
 }

@@ -21,7 +21,7 @@ const htmlFooter = `</body>
 var htmlEntries []*Entry
 
 func init() {
-	htmlEntries = LoadFromCacheFile("/tmp/noad.cache")
+	htmlEntries = LoadFromCacheFile("./resources/noad.cache")
 }
 
 type Entry struct {

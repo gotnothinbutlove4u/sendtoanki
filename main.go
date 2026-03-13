@@ -3,13 +3,17 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
+	"github.com/dawit909/sendtoanki/src/constants"
 	"github.com/dawit909/sendtoanki/src/handler"
 	_ "modernc.org/sqlite"
 )
 
 func main() {
-	log.Println("started...")
+	// Ensure resources dir exists
+	os.MkdirAll(constants.RSC_DIR_PATH, 0755)
+	os.MkdirAll(constants.TMP_DIR_PATH, 0755)
 
 	// Simple CORS middleware
 	enableCORS := func(next http.HandlerFunc) http.HandlerFunc {
@@ -35,7 +39,7 @@ func main() {
 	// We use a prefix handler for delete to capture the word stem from the URL
 	http.HandleFunc("/api/words/", enableCORS(handler.DeleteAPIHandler))
 
-	log.Println("Server starting on port 8080...")
+	log.Println("started...")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
