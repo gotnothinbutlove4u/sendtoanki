@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 # 7. Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o /sendtoanki
+RUN CGO_ENABLED=1 GOOS=linux go build -o /sendtoanki
 
 EXPOSE 8080
 
